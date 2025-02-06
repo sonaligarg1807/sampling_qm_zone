@@ -184,9 +184,7 @@ def extract_and_update_resids(input_gro_file, traj_resid_file, natoms, limits):
 def extract_random_resids(input_gro_file, traj_resid_file, natoms, axes_count, axes, selection_choice, y_range_choice, num_to_select=None):
     limits = ask_axes_and_limits(axes_count, axes, selection_choice, y_range_choice, num_to_select)
     extract_and_update_resids(input_gro_file, traj_resid_file, natoms, limits)
-
-
-
+    
 #All functions for nearest neighbors calculation using ASANN algorithm
 # Atomic weights for COM calculations
 ATOMIC_WEIGHTS = {
@@ -500,105 +498,6 @@ def calculateCOM(resid, input_gro_file):
         return getCOM(residue_lines)
     return None
 
-# Function to find the nearest GB_resid for a given source_resid
-def findNearestGBResid(source_resid, gb_resids, input_gro_file):
-    source_com = calculateCOM(source_resid, input_gro_file)
-    if source_com is None:
-        print(f"Error: COM for source_resid {source_resid} not found.")
-        return None
-    
-    min_distance = float('inf')
-    nearest_gb_resid = None
-    
-    for gb_resid in gb_resids:
-        gb_com = calculateCOM(gb_resid, input_gro_file)
-        if gb_com is not None:
-            distance = np.linalg.norm(gb_com - source_com)
-            if distance < min_distance:
-                min_distance = distance
-                nearest_gb_resid = gb_resid
-    
-    print(f"Nearest GB_resid to source_resid {source_resid} is {nearest_gb_resid} with distance {min_distance}")
-    return nearest_gb_resid
-
-# Calculate vector from source_resid to its nearest GB_resid
-def calculateCOMVectors(source_resid, gb_resids, input_gro_file):
-    nearest_gb_resid = findNearestGBResid(source_resid, gb_resids, input_gro_file)
-    if nearest_gb_resid is None:
-        return None
-    
-    source_com = calculateCOM(source_resid, input_gro_file)
-    gb_com = calculateCOM(nearest_gb_resid, input_gro_file)
-    if source_com is None or gb_com is None:
-        return None
-    
-    vector = gb_com - source_com  # Vector from source_resid COM to nearest GB_resid COM
-    print(f"COM vector from source_resid {source_resid} to nearest gb_resid {nearest_gb_resid}: {vector}")
-    
-    return {nearest_gb_resid: vector}
-
-# Create dictionary with vectors from source_resid COM to each of the neighbor (target_resid) COM
-def calculateNeighborVectors(source_resid, target_resids, input_gro_file):
-    source_com = calculateCOM(source_resid, input_gro_file)
-    if source_com is None:
-        print(f"Error: COM for source_resid {source_resid} not found.")
-        return {}
-
-    neighbor_vectors = {}
-    for target_resid in target_resids:
-        target_com = calculateCOM(target_resid, input_gro_file)
-        if target_com is not None:
-            neighbor_vectors[target_resid] = target_com - source_com  # Vector from source_resid COM to target_resid COM
-            print(f"COM vector from source_resid {source_resid} to target_resid {target_resid}: {neighbor_vectors[target_resid]}")
-        else:
-            print(f"Warning: COM for target_resid {target_resid} not found.")
-    
-    return neighbor_vectors
-
-# function to compute dot product of two vectors
-def dot_product(vec1, vec2):
-    return np.dot(vec1, vec2)/(np.linalg.norm(vec1)/np.linalg.norm(vec2))
-
-def calculateDotProducts(source_resid, gb_resids, target_resids, input_gro_file):
-    gb_vector_dict = calculateCOMVectors(source_resid, gb_resids, input_gro_file)
-    if gb_vector_dict is None:
-        return None
-    
-    nearest_gb_resid, gb_vector = next(iter(gb_vector_dict.items()))  # Get the nearest GB vector
-    
-    neighbor_vectors = calculateNeighborVectors(source_resid, target_resids, input_gro_file)
-    dot_product_dict = {}
-
-    for target_resid, neighbor_vector in neighbor_vectors.items():
-        dot_product_value = dot_product(neighbor_vector, gb_vector)
-        dot_product_dict[target_resid] = {nearest_gb_resid: dot_product_value}
-        print(f"Dot product for target_resid {target_resid} and nearest gb_resid {nearest_gb_resid}: {dot_product_value}")
-    
-    return dot_product_dict
-
-def calculate_probabilities(target_resids, coupling_data, dot_product_dict):
-    probabilities = {}
-    weights = {}
-    total_weight = 0.0
-    kT = 25.7  # Boltzmann constant times temperature (298 K)
-
-    # Compute weights for each neighbor
-    for target_resid, coupling in zip(target_resids, coupling_data):
-        if target_resid in dot_product_dict:
-            # Get the dot product (only one exists per target_resid)
-            eta = list(dot_product_dict[target_resid].values())[0]  # Extract the single dot product
-            weight = math.exp(-coupling / kT) * math.exp(-eta / kT)
-            weights[target_resid] = weight
-            total_weight += weight
-        else:
-            print(f"Warning: No dot product found for neighbor {target_resid}")
-
-    # Compute probabilities
-    for target_resid, weight in weights.items():
-        probabilities[target_resid] = 1- (weight / total_weight) if total_weight > 0 else 0.0
-
-    return probabilities
-
 # Function to read source_resid and target_resid from a file
 def read_resid_data(average_coupling_values):
     source_resids = []
@@ -615,18 +514,46 @@ def read_resid_data(average_coupling_values):
     
     return source_resids, target_resids, coupling_data
 
+#Function to calculate probabilities
+# def calculate_probabilities(target_resids, coupling_data):
+#     probabilities = {}
+#     weights = {}
+#     total_weight = 0.0
+#     kT = 25.7  # Boltzmann constant times temperature (298 K)
 
-def biased_probabilities(average_coupling_values, gb_resids, input_gro_file):
-    
-    # Read source and target residues along with coupling data
-    source_resids, target_resids, coupling_data = read_resid_data(average_coupling_values)
-    
-    # Compute dot products once for all source residues
-    dot_product_dict = calculateDotProducts(source_resids[0], gb_resids, target_resids, input_gro_file)
-    
-    # Compute probabilities for each target_resid
-    probabilities = calculate_probabilities(target_resids, coupling_data, dot_product_dict)
-       
+#     # Compute weights for each neighbor
+#     for target_resid, coupling in zip(target_resids, coupling_data):
+#         weight = math.exp(-coupling / kT)
+#         weights[target_resid] = weight
+#         total_weight += weight
+#     else:
+#         print(f"Warning: No dot product found for neighbor {target_resid}")
+
+#     # Compute probabilities
+#     for target_resid, weight in weights.items():
+#         probabilities[target_resid] = 1- (weight / total_weight) if total_weight > 0 else 0.0
+
+#     return probabilities
+
+# probabilities calculated using softmax activation function
+def calculate_probabilities(target_resids, coupling_data, beta=(1/25.7)):
+    probabilities = {}
+    exp_weight = {}
+    total_weight = 0.0
+
+    # Compute softmax weights for each neighbor
+    max_coupling = max(coupling_data)  # Normalize to avoid overflow issues with large numbers
+    exp_weights = []
+
+    for coupling in coupling_data:
+        exp_weight = math.exp(beta * (coupling - max_coupling))  # Shifted for numerical stability
+        exp_weights.append(exp_weight)
+        total_weight += exp_weight
+
+    # Calculate the probabilities for each target_resid
+    for target_resid, exp_weight in zip(target_resids, exp_weights):
+        probabilities[target_resid] = exp_weight / total_weight if total_weight > 0 else 0.0
+
     return probabilities
 
 def check_too_far(source_com, selected_neighbor_com):
@@ -639,137 +566,6 @@ def check_too_far(source_com, selected_neighbor_com):
 def check_visited(selected_neighbor, visited_resids):
     """Checks if the neighbor has already been visited."""
     return selected_neighbor in visited_resids
-
-#version ensuring movement in forward direction
-def select_neighbor(probabilities, source_resid, gb_resids, input_gro_file, visited_resids):
-    random_value = random.uniform(0, 1)  # Generate a random number between 0 and 1
-    print(f"Random number for source_resid {source_resid}: {random_value}")
-    
-    selected_neighbor = None  # Initialize as None
-
-    print("Debug: probabilities structure:", probabilities)
-
-    # Compute the GB vector (assuming first GB resid is the closest)
-    gb_vector_dict = calculateCOMVectors(source_resid, gb_resids, input_gro_file)
-    if gb_vector_dict is None:
-        return None
-    nearest_gb_resid, gb_vector = next(iter(gb_vector_dict.items()))
-
-    # Compute source center of mass
-    source_com = calculateCOM(source_resid, input_gro_file)
-
-    # Sort neighbors by probability closeness to `random_value`
-    sorted_neighbors = sorted(probabilities.items(), key=lambda x: abs(x[1] - random_value))
-
-    # Get all possible neighbors sorted by probability closeness
-    candidate_neighbors = [target_resid for target_resid, _ in sorted_neighbors]
-
-    reached_gb = source_resid == nearest_gb_resid  #flag for GB crossing
-
-    for target_resid in candidate_neighbors:
-        if target_resid in visited_resids:
-            print(f"Neighbor {target_resid} has already been visited. Skipping...")
-            continue
-
-        # Compute neighbor COM
-        selected_neighbor_com = calculateCOM(target_resid, input_gro_file)
-
-        # Get direction vector (Compute only for current target_resid)
-        neighbor_vector = calculateNeighborVectors(source_resid, [target_resid], input_gro_file).get(target_resid)
-        if neighbor_vector is None:
-            print(f"Skipping {target_resid} as no valid vector found.")
-            continue
-
-        # Compute dot product
-        dot_product_value = dot_product(neighbor_vector, gb_vector)
-
-        # Conditions for valid neighbor:
-        if not reached_gb and dot_product_value < 0:
-            print(f"Neighbor {target_resid} is against GB direction. Skipping...")
-            continue
-
-        if reached_gb and dot_product_value > 0:
-            print(f"Neighbor {target_resid} does not move beyond GB. Skipping...")
-            continue
-
-        if check_too_far(source_com, selected_neighbor_com):
-            print(f"Neighbor {target_resid} is too far. Skipping...")
-            continue
-
-        # Assign selected_neighbor if valid
-        selected_neighbor = target_resid
-        print(f"Selected valid neighbor: {selected_neighbor} (probability: {probabilities[selected_neighbor]})")
-        return selected_neighbor  # Return immediately upon finding a valid neighbor
-
-    # **Backtracking until a valid neighbor is found**
-    while selected_neighbor is None and visited_resids:
-        last_visited = visited_resids[-1]  # Remove and get the last visited residue
-        print(f"No valid neighbor found. Backtracking to {last_visited}...")
-
-        # **Recursively call `select_neighbor` with the backtracked residue**
-        return select_neighbor(probabilities, last_visited, gb_resids, input_gro_file, visited_resids)
-
-    # If no visited residues left, return None
-    print("No previous residues to backtrack to. Stopping.")
-    return None
-
-# def select_neighbor(probabilities, source_resid, gb_resids, input_gro_file, visited_resids):
-#     random_value = random.uniform(0, 1)  # Generate a random number between 0 and 1
-#     print(f"Random number for source_resid {source_resid}: {random_value}")
-    
-#     selected_neighbor = None  # Initialize as None
-
-#     print("Debug: probabilities structure:", probabilities)
-
-#     # Compute the GB vector (assuming first GB resid is the closest)
-#     gb_vector_dict = calculateCOMVectors(source_resid, gb_resids, input_gro_file)
-#     if gb_vector_dict is None:
-#         return None
-#     _, gb_vector = next(iter(gb_vector_dict.items()))
-
-#     # Compute source center of mass
-#     source_com = calculateCOM(source_resid, input_gro_file)
-
-#     # Sort neighbors by probability closeness to `random_value`
-#     sorted_neighbors = sorted(probabilities.items(), key=lambda x: abs(x[1] - random_value))
-
-#     # Get all possible neighbors sorted by probability closeness
-#     candidate_neighbors = [target_resid for target_resid, _ in sorted_neighbors]
-
-#     for target_resid in candidate_neighbors:
-#         if target_resid in visited_resids:
-#             print(f"Neighbor {target_resid} has already been visited. Skipping...")
-#             continue
-
-#         # Compute neighbor COM
-#         selected_neighbor_com = calculateCOM(target_resid, input_gro_file)
-
-#         # Get direction vector (Compute only for current target_resid)
-#         neighbor_vector = calculateNeighborVectors(source_resid, [target_resid], input_gro_file).get(target_resid)
-#         if neighbor_vector is None:
-#             print(f"Skipping {target_resid} as no valid vector found.")
-#             continue
-
-#         # Compute dot product
-#         dot_product_value = dot_product(neighbor_vector, gb_vector)
-
-#         # Conditions for valid neighbor:
-#         if dot_product_value < 0:
-#             print(f"Neighbor {target_resid} is against GB direction. Skipping...")
-#             continue
-#         if check_too_far(source_com, selected_neighbor_com):
-#             print(f"Neighbor {target_resid} is too far. Skipping...")
-#             continue
-
-#         # ✅ Assign selected_neighbor if valid
-#         selected_neighbor = target_resid
-#         print(f"Selected valid neighbor: {selected_neighbor} (probability: {probabilities[selected_neighbor]})")
-#         break  # Stop searching after finding the first valid neighbor
-
-#     # If no valid neighbor is found, return None
-#     if selected_neighbor is None:
-#         print("No valid neighbor found.")
-#     return selected_neighbor
 
 def check_range(resid, input_gro_file):
     """
@@ -795,6 +591,143 @@ def check_range(resid, input_gro_file):
             print(f"Resid {resid} does NOT satisfy y_COM {y_COM} in any range")
             return "out_of_range"
     return None
+
+#original select_neighbor function without fallback mechanism
+# def select_neighbor(probabilities, source_resid, input_gro_file, visited_resids):
+#     while True: #Loop allows for backtracking if needed
+#         random_value = random.uniform(0, 1)  # Generate a random  number between 0 and 1
+#         print(f"Random number for source_resid {source_resid}: {random_value}")
+    
+#         # Compute source center of mass
+#         source_com = calculateCOM(source_resid, input_gro_file)
+#         source_range = check_range(source_resid, input_gro_file)
+    
+#         # Sort neighbors by probability closeness to `random_value`
+#         sorted_neighbors = sorted(probabilities.items(), key=lambda x: abs(x[1] - random_value))
+    
+#         for target_resid, _ in sorted_neighbors:
+#             if target_resid in visited_resids:
+#                 print(f"Neighbor {target_resid} has already been visited. Skipping...")
+#                 continue
+    
+#             # Compute neighbor COM
+#             target_com = calculateCOM(target_resid, input_gro_file)
+    
+#             # Check movement in the correct y-direction based on first source_resid range
+#             if source_range == "in_range_1" and target_com[1] <= source_com[1]:
+#                 print(f"Neighbor {target_resid} does not move forward in range 1. Skipping...")
+#                 continue
+#             elif source_range == "in_range_2" and target_com[1] >= source_com[1]:
+#                 print(f"Neighbor {target_resid} does not move forward in range 2. Skipping...")
+#                 continue
+    
+#             # Check if the selected neighbor is too far
+#             if check_too_far(source_com, target_com):
+#                 print(f"Neighbor {target_resid} is too far. Skipping...")
+#                 continue
+    
+#             # Assign selected neighbor if valid
+#             selected_neighbor = target_resid
+#             print(f"Selected valid neighbor: {target_resid} (probability: {probabilities[target_resid]})")
+#             return selected_neighbor  # Return the first valid neighbor found
+    
+#         # **Backtracking if no valid neighbor found**
+#         if visited_resids:
+#             last_visited = visited_resids.pop()  # Remove and get the last visited residue
+#             print(f"No valid neighbor found. Backtracking to {last_visited}...")
+#             source_resid = last_visited
+#             return select_neighbor(probabilities, source_resid, input_gro_file, visited_resids)
+    
+#         else:
+#             # If no previous residues left, return None
+#             print("No previous residues to backtrack to. Stopping.")
+#             return None
+
+
+#modified select_neighbor function according to fallback mechanism
+def select_neighbor(probabilities, source_resid, first_source_resid, input_gro_file, visited_resids, sampled_paths, charge_transfer_submission_script, spec_file, mdp_file, top_file, hamiltonian_file, ham_log_file, sub_dir, n=1):
+    """
+    Selects a valid neighbor for the given source_resid based on probabilities.
+    if no valid neighbor is found, backtracks and calls fallback_select_neighbor.
+    """
+    while True: #Loop allows for backtracking if needed
+        random_value = random.uniform(0, 1)  # Generate a random  number between 0 and 1
+        print(f"Random number for source_resid {source_resid}: {random_value}")
+    
+        # Compute source center of mass
+        source_com = calculateCOM(source_resid, input_gro_file)
+        source_range = check_range(first_source_resid, input_gro_file)
+    
+        # Sort neighbors by probability closeness to `random_value`
+        sorted_neighbors = sorted(probabilities.items(), key=lambda x: abs(x[1] - random_value))
+    
+        for target_resid, _ in sorted_neighbors:
+            if target_resid in visited_resids:
+                print(f"Neighbor {target_resid} has already been visited. Skipping...")
+                continue
+    
+            # Compute neighbor COM
+            target_com = calculateCOM(target_resid, input_gro_file)
+    
+            # Check movement in the correct y-direction based on first source_resid range
+            if source_range == "in_range_1" and target_com[1] <= source_com[1]:
+                print(f"Neighbor {target_resid} does not move forward in range 1. Skipping...")
+                continue
+            elif source_range == "in_range_2" and target_com[1] >= source_com[1]:
+                print(f"Neighbor {target_resid} does not move forward in range 2. Skipping...")
+                continue
+    
+            # Check if the selected neighbor is too far
+            if check_too_far(source_com, target_com):
+                print(f"Neighbor {target_resid} is too far. Skipping...")
+                continue
+    
+            # Assign selected neighbor if valid
+            selected_neighbor = target_resid
+            print(f"Selected valid neighbor: {target_resid} (probability: {probabilities[target_resid]})")
+            return selected_neighbor  # Return the first valid neighbor found
+    
+        # **Backtracking if no valid neighbor found**
+        if visited_resids:
+            sampled_paths.remove(source_resid)  # Remove the source_resid from the sampled paths
+            last_visited = visited_resids[-n]  # Remove and get the last visited residue
+            print(f"No valid neighbor found. Backtracking to {last_visited}...")
+
+            #call the fallback_select_neighbor function
+            fallback_resid = last_visited
+            selected_neighbor = fallback_select_neighbor(fallback_resid, input_gro_file, charge_transfer_submission_script, spec_file, mdp_file, top_file, hamiltonian_file, ham_log_file, sub_dir, visited_resids, sampled_paths, first_source_resid)
+            return selected_neighbor            
+    
+        else:
+            # If no previous residues left, return None
+            print("No previous residues to backtrack to. Stopping.")
+            return None
+
+# functio defining the fallback mechanism
+def fallback_select_neighbor(fallback_resid, input_gro_file, charge_transfer_submission_script, spec_file, mdp_file, top_file, hamiltonian_file, ham_log_file, sub_dir, visited_resids, sampled_paths, first_source_resid):
+    """
+    A fallback mechanism to find a neighboring residue if the primary attempt fails.
+    """
+    print(f"Fallback mechanism activated for fallback_resid {fallback_resid}...")
+    
+    #Compute avearge coupling values for the fallback_resid
+    average_coupling_values = average_coupling_main(fallback_resid, input_gro_file, charge_transfer_submission_script, spec_file, mdp_file, top_file, hamiltonian_file, ham_log_file, sub_dir, visited_resids, sampled_paths, first_source_resid)
+    print(f"Average coupling values for fallback_resid {fallback_resid}: {average_coupling_values}")
+
+    # read and process the coupling data
+    _, target_resids, coupling_data = read_resid_data(average_coupling_values)
+
+    # calculate probabilities for the fallback_resid
+    probabilities = calculate_probabilities(target_resids, coupling_data)
+    print(f"Final probabilities for fallback_resid {fallback_resid}: {probabilities}")
+
+    #call select_neighbor with the fallback resid
+    selected_neighbor = select_neighbor(probabilities, fallback_resid, first_source_resid, input_gro_file, visited_resids, sampled_paths, charge_transfer_submission_script, spec_file, mdp_file, top_file, hamiltonian_file, ham_log_file, sub_dir, n=1)
+
+    if selected_neighbor is None:
+        print(f"No selected neighbor found for fallback_resid {fallback_resid}. Exiting...")
+
+    return selected_neighbor
 
 # main function updated and testing
 def main():
@@ -872,27 +805,15 @@ def main():
             while True:
                 average_coupling_values = average_coupling_main(source_resid, input_gro_file, charge_transfer_submission_script, spec_file, mdp_file, top_file, hamiltonian_file, ham_log_file, sub_dir)
                 print(f"Average coupling values for source_resid {source_resid}: {average_coupling_values}")
-    
-                gb_resids = [4114, 4076, 4023, 4181, 4179]
 
-                probabilities = biased_probabilities(average_coupling_values, gb_resids, input_gro_file)
+                source_resids, target_resids, coupling_data = read_resid_data(average_coupling_values)
+                
+                probabilities = calculate_probabilities(target_resids, coupling_data)
                 print(f"Final probabilities for source_resid {source_resid}: {probabilities}")
-                selected_neighbor = select_neighbor(probabilities, source_resid, gb_resids, input_gro_file, visited_resids)
+                
+                selected_neighbor = select_neighbor(probabilities, source_resid, first_source_resid, input_gro_file, visited_resids, sampled_paths, charge_transfer_submission_script, spec_file, mdp_file, top_file, hamiltonian_file, ham_log_file, sub_dir, n=1)
                 print(f"Selected neighbor for source_resid {source_resid}: {selected_neighbor}")
-
-                while selected_neighbor is None and visited_resids:
-                    print(f"No valid neighbor found for source_resid {source_resid}. Backtracking...")
-                    visited_resids.pop()  # Remove the last visited residue
-
-                    # if no more residues to backtrack, stop
-                    if not visited_resids:
-                        print("No previous residues to backtrack to. Stopping.")
-                        break
-
-                    # retry with the last visited residue
-                    source_resid = visited_resids[-1]
-                    selected_neighbor = select_neighbor(probabilities, source_resid, gb_resids, input_gro_file, visited_resids)
-
+                        
                 if selected_neighbor is None:
                     print(f"No selected neighbor found for source_resid {source_resid}. Exiting...")
                     break
@@ -919,286 +840,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-            # while True:
-            #     average_coupling_values = average_coupling_main(source_resid, input_gro_file, charge_transfer_submission_script, spec_file, mdp_file, top_file, hamiltonian_file, ham_log_file, sub_dir)
-            #     print(f"Average coupling values for source_resid {source_resid}: {average_coupling_values}")
-    
-            #     gb_resids = [4114, 4076, 4023, 4181, 4179]
-
-            #     probabilities = biased_probabilities(average_coupling_values, gb_resids, input_gro_file)
-            #     print(f"Final probabilities for source_resid {source_resid}: {probabilities}")
-            #     selected_neighbor = select_neighbor(probabilities, source_resid, gb_resids, input_gro_file, visited_resids)
-            #     print(f"Selected neighbor for source_resid {source_resid}: {selected_neighbor}")
-            #     visited_resids.append(selected_neighbor)
-
-            #     if selected_neighbor is None:
-            #         print(f"No selected neighbor found for source_resid {source_resid}. Exiting...")
-            #         break
-
-            #     # Add selected_neighbor to the sampled paths list
-            #     sampled_paths.append(selected_neighbor)
-
-            #     # Check the range of selected_neighbor
-            #     selected_range = check_range(selected_neighbor, input_gro_file)
-
-            #     # stop if selected_neighbor is in opposite range
-            #     if (first_range == "in_range_1" and selected_range == "in_range_2") or \
-            #         (first_range == "in_range_2" and selected_range == "in_range_1"):
-            #         print(f"Selected neighbor {selected_neighbor} is in opposite range. Exiting...")
-            #         break
-
-            #     # Continue iteration with selected_neighbor as the new source_resid
-            #     print(f"Continuing with selected_neighbor {selected_neighbor} as the new source_resid.")
-            #     source_resid = selected_neighbor
-                
-            # print(f"Sampled paths for source_resid {first_source_resid}: {sampled_paths}")
-
-
-  
-# #main function working well till selected_neighbour
-# # To get print messages in text file use: python3 -u script.py > output.txt   : Here -u means unbuffered output
-# def main():
-#     #set parameters
-#     traj_path = "/lustre/work/ws/ws1/ka_rv4081-sfb_cm/pentacene/gb_pen-schellhammer/y45/transfer_integral_distr/snapshots_asann/input_files/trajectories"
-#     traj_file_prefix = "TRAJSS"
-#     output_extract_resid_file = "random_resids.txt"
-#     natoms = 36
-#     axes_count = 3
-#     axes = "x,y,z"
-#     selection_choice = "no"
-#     y_range_choice = 2
-#     num_to_select = 1
-#     mdp_file = "/lustre/work/ws/ws1/ka_rv4081-sfb_cm/pentacene/gb_pen-schellhammer/y45/parallel_workflow_test/input_files/namd-qmmm.mdp"
-#     top_file = "/lustre/work/ws/ws1/ka_rv4081-sfb_cm/pentacene/gb_pen-schellhammer/y45/parallel_workflow_test/input_files/pen-esp.top"
-#     charge_transfer_submission_script = "test.sh"
-#     spec_file = "pen-hole.spec"
-#     hamiltonian_file = "TB_HAMILTONIAN.xvg"
-#     ham_log_file = "ham.log"
-
-#     # define trajectory range
-#     itraj = 1
-#     ftraj = 1
-
-#     for traj in range(itraj, ftraj+1):
-#         traj_dir = f"TRAJ{traj}"
-#         os.makedirs(traj_dir, exist_ok=True)
-#         input_gro_file = os.path.join(traj_path, f"{traj_file_prefix}{traj}.gro")
-#         print(f"Processing trajectory: {traj}, input file: {input_gro_file}")
-        
-#         if not os.path.exists(input_gro_file):
-#             print(f"Error: File {input_gro_file} does not exist. Skipping this trajectory.")
-#             break
-
-#         #step 1: calling extract_random_resids function to extract random start resids within the specified parameters
-#         traj_resid_file = os.path.join(traj_dir, output_extract_resid_file)
-#         extract_random_resids(input_gro_file, traj_resid_file, natoms, axes_count, axes, selection_choice, y_range_choice, num_to_select)
-
-#         # step 2: Looping over the source_resid present in random_resids.txt
-#         with open(traj_resid_file, 'r') as f:
-#             source_resids = [line.strip() for line in f.readlines()]
-            
-#         for source_resid in source_resids:
-#             source_resid = int(source_resid)
-            
-#             # Create a subdirectory for each source_resid inside respective trajectory directory
-#             sub_dir = os.path.join(traj_dir, f"subdir_{source_resid}")
-#             os.makedirs(sub_dir, exist_ok=True)
-#             print(f"Processing source_resid: {source_resid}, created subdir: {sub_dir}")
-    
-#             #Assign first source_resid to the current source_resid
-#             first_source_resid = source_resid
-#             print(f"First source_resid: {first_source_resid}")
-            
-#             visited_resids = []
-#             visited_resids.append(first_source_resid)
-
-#             average_coupling_values = average_coupling_main(source_resid, input_gro_file, charge_transfer_submission_script, spec_file, mdp_file, top_file, hamiltonian_file, ham_log_file, sub_dir)
-#             print(f"Average coupling values for source_resid {source_resid}: {average_coupling_values}")
-
-#             gb_resids = [4114, 4076, 4023, 4181, 4179]
-#             probabilities = biased_probabilities(average_coupling_values, gb_resids, input_gro_file)
-#             print(f"Final probabilities for source_resid {source_resid}: {probabilities}")
-#             selected_neighbor = select_neighbor(probabilities, source_resid, gb_resids, input_gro_file, visited_resids)
-#             print(f"Selected neighbor for source_resid {source_resid}: {selected_neighbor}")
-#             visited_resids.append(selected_neighbor)
-            
-# if __name__ == "__main__":
-#     main()
-
-# previous versions of functions
-# # Previous version: Create dictionary with vectors from source_resid COM to each of the grain boundary (gb_resids) COM
-# def calculateCOMVectors(source_resid, gb_resids, input_gro_file):
-#     source_com = calculateCOM(source_resid, input_gro_file)
-#     if source_com is None:
-#         print(f"Error: COM for source_resid {source_resid} not found.")
-#         return {}
-
-#     com_vectors = {}
-#     for gb_resid in gb_resids:
-#         gb_com = calculateCOM(gb_resid, input_gro_file)
-#         if gb_com is not None:
-#             com_vectors[gb_resid] = gb_com - source_com  # Vector from source_resid COM to gb_resid COM
-#             print(f"COM vector from source_resid {source_resid} to gb_resid {gb_resid}: {com_vectors[gb_resid]}")
-#         else:
-#             print(f"Warning: COM for gb_resid {gb_resid} not found.")
-    
-#     return com_vectors
-
-# # Previous version: Create a dictionary of dot products for each neighbor to each grain boundary resid
-# def calculateDotProducts(source_resid, gb_resids, target_resids, input_gro_file):
-#     # Get vectors from source_resid to all grain boundary residues
-#     gb_vectors = calculateCOMVectors(source_resid, gb_resids, input_gro_file)
-    
-#     # Get vectors from source_resid to all neighbor residues
-#     neighbor_vectors = calculateNeighborVectors(source_resid, target_resids, input_gro_file)
-
-#     dot_product_dict = {}
-#     best_dot_product_dict = {}
-
-#     for target_resid, neighbor_vector in neighbor_vectors.items():
-#         dot_product_dict[target_resid] = {}
-#         best_dot_product = float('-inf')  # Initialize to negative infinity
-#         least_negative_dot_product = float('-inf')  # Track the least negative dot product
-#         best_gb_resid = None
-#         least_negative_gb_resid = None
-
-#         for gb_resid, gb_vector in gb_vectors.items():
-#             # Calculate the dot product
-#             dot_prod = dot_product(neighbor_vector, gb_vector)
-#             dot_product_dict[target_resid][gb_resid] = dot_prod
-
-#             print(f"Dot product for target_resid {target_resid} and gb_resid {gb_resid}: {dot_prod}")
-
-#             # Update the best (maximum) dot product
-#             if dot_prod > best_dot_product:
-#                 best_dot_product = dot_prod
-#                 best_gb_resid = gb_resid
-
-#             # Track the least negative dot product (for cases where no positive dot product exists)
-#             if dot_prod < 0 and dot_prod > least_negative_dot_product:
-#                 least_negative_dot_product = dot_prod
-#                 least_negative_gb_resid = gb_resid
-
-#         # If at least one positive dot product was found, use the best positive one
-#         if best_dot_product > 0:
-#             best_dot_product_dict[target_resid] = {'gb_resid': best_gb_resid, 'dot_product': best_dot_product}
-#         # Otherwise, use the least negative dot product
-#         else:
-#             best_dot_product_dict[target_resid] = {'gb_resid': least_negative_gb_resid, 'dot_product': least_negative_dot_product}
-
-#         print(f"Best dot product for target_resid {target_resid}: {best_dot_product_dict[target_resid]}")
-
-#     return dot_product_dict, best_dot_product_dict
-
-# previous version: Calculate probabilities using best dot products
-# def calculate_probabilities(target_resids, coupling_data, best_dot_product_dict):
-#     probabilities = {}
-#     weights = {}
-#     total_weight = 0.0
-#     kT = 25.7  # Boltzmann constant times temperature (298 K)
-    
-#     # Compute weights for each neighbor
-#     for target_resid, coupling in zip(target_resids, coupling_data):
-#         if target_resid in best_dot_product_dict:
-#             eta = best_dot_product_dict[target_resid]['dot_product']
-#             weight = math.exp(-coupling / kT) * math.exp(-eta / kT)
-#             weights[target_resid] = weight
-#             total_weight += weight
-#         else:
-#             print(f"Warning: No best dot product found for neighbor {target_resid}")
-    
-#     # Compute probabilities
-#     for target_resid, weight in weights.items():
-#         probabilities[target_resid] = weight / total_weight if total_weight > 0 else 0.0
-    
-#     return probabilities
-# def select_neighbor(probabilities, source_resid, gb_resids, input_gro_file, visited_resids):
-#     random_value = random.uniform(0,1)  # Generate a random number between 0 and 1
-#     print(f"Random number for source_resid {source_resid}: {random_value}")
-#     selected_neighbor = None
-#     min_diff = float('inf')
-    
-#     print("Debug: probabilities structure:", probabilities)
-
-#     # Compute the GB vector (assuming first GB resid is the closest)
-#     gb_vector_dict = calculateCOMVectors(source_resid, gb_resids, input_gro_file)
-#     if gb_vector_dict is None:
-#         return None
-#     nearest_gb_resid, gb_vector = next(iter(gb_vector_dict.items()))
-    
-#     # compute source center of mass
-#     source_com = calculateCOM(source_resid, input_gro_file)
-
-#     # Find the neighbor whose probability is closest to the random number
-#     for target_resid in probabilities:
-#         prob = probabilities[target_resid]  # ensure this is a float, not a dict
-#         if isinstance(prob, dict):
-#             prob = list(prob.values())[0] # Extract the single probability value
-            
-#         diff = abs(prob - random_value)
-#         if diff < min_diff:
-#             selected_neighbor = target_resid
-#             min_diff = diff
-
-#     # Compute the neighbor vector
-#     neighbor_vectors = calculateNeighborVectors(source_resid, [selected_neighbor], input_gro_file)
-#     selected_vector = neighbor_vectors[selected_neighbor]
-    
-#     # Compute selected_neighbor_com
-#     selected_neighbor_com = calculateCOM(selected_neighbor, input_gro_file)
-
-#     # Compute dot product to check if it is in the GB direction
-#     dot_product_value = dot_product(selected_vector, gb_vector)
-
-#     # If the selected neighbor is in the opposite direction, choose the next best one
-#     if dot_product_value < 0:
-#         print(f"Selected neighbor {selected_neighbor} is against GB direction. Choosing another.")
-#     elif check_too_far(source_com, selected_neighbor_com):
-#         print(f"Selected neighbor {selected_neighbor} is too far. Choosing another.")
-#     elif check_visited(selected_neighbor, visited_resids):
-#         print(f"Selected neighbor {selected_neighbor} has already been visited. Choosing another.")
-#     else:
-#         return selected_neighbor
-    
-        
-#     # Sort neighbors by absolute difference and find the first valid one
-#     sorted_neighbors = sorted(probabilities.items(), key=lambda x: abs(x[1] - random_value))
-#     for target_resid, _ in sorted_neighbors:
-#         if target_resid == selected_neighbor or target_resid in visited_resids:
-#             continue  # Skip the previously selected one
-        
-#         print(f"neighbor_vectors keys: {list(neighbor_vectors.keys())}")
-#         selected_vector = neighbor_vectors[target_resid]
-#         dot_product_value = dot_product(selected_vector, gb_vector)
-#         selected_neighbor_com = calculateCOM(target_resid, input_gro_file)
-#         if dot_product_value > 0 and not check_too_far(source_com, selected_neighbor_com):  # Ensure it's in the GB direction
-#             selected_neighbor = target_resid
-#             break
-
-#     return selected_neighbor
-
-# Previous version: selecting neighbour with minimum probability
-# def biased_probabilities(average_coupling_values, gb_resids, input_gro_file):
-#     final_probabilities = {}
-#     selected_neighbor = None
-#     min_probability = float('inf')
-    
-#     # Read source and target residues along with coupling data
-#     source_resids, target_resids, coupling_data = read_resid_data(average_coupling_values)
-    
-#     # Compute dot products once for all source residues
-#     _, best_dot_product_dict = calculateDotProducts(source_resids[0], gb_resids, target_resids, input_gro_file)
-    
-#     for source_resid in source_resids:
-#         # Compute probabilities for each target_resid
-#         probabilities = calculate_probabilities(target_resids, coupling_data, best_dot_product_dict)
-#         final_probabilities[source_resid] = probabilities
-        
-#         # Find the neighbor with the minimum probability
-#         for target_resid, prob in probabilities.items():
-#             if prob < min_probability:
-#                 min_probability = prob
-#                 selected_neighbor = target_resid
-    
-#     return final_probabilities, selected_neighbor
