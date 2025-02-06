@@ -6,6 +6,7 @@ import subprocess
 import math
 import shutil
 import time
+import glob
 #from mpi4py import MPI
 
 #All input functions for extracting random resids
@@ -830,8 +831,27 @@ def main():
                 if (first_range == "in_range_1" and selected_range == "in_range_2") or \
                     (first_range == "in_range_2" and selected_range == "in_range_1"):
                     print(f"Selected neighbor {selected_neighbor} is in opposite range. Exiting...")
-                    break
 
+                    # Identify the current TRAJ directory from sub_dir
+                    traj_dir = os.path.dirname(sub_dir)  # Get the parent TRAJ* directory
+
+                    # Remove all subdir_* inside TRAJ* directories
+                    sub_dirs = glob.glob(os.path.join(traj_dir, "subdir_*"))
+                    for sub_dir in sub_dirs:
+                        try:
+                            os.system(f"rm -r {sub_dir}")  # Remove the subdir safely
+                        except Exception as e:
+                            print(f"Error removing {sub_dir}: {e}")
+
+                     # Write final sampled_paths to a text file
+                     output_file = os.path.join(traj_dir, "final_sampled_paths.txt")
+                     with open(output_file, "w") as f:
+                          for resid in sampled_paths:
+                              f.write(f"{resid}\n")
+
+                     print(f"Final sampled paths saved to {output_file}")
+                     break    
+                
                 # Continue iteration with selected_neighbor as the new source_resid
                 print(f"Continuing with selected_neighbor {selected_neighbor} as the new source_resid.")
                 source_resid = selected_neighbor
